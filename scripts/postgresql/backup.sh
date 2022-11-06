@@ -1,0 +1,163 @@
+#!/bin/bash
+
+. /postgresql/functions
+
+if [[ -n "$DB_DUMP_DEBUG" ]]; then
+  set -x
+fi
+
+# get all variables from environment variables or files (e.g. VARIABLE_NAME_FILE)
+# (setting defaults happens here, too)
+file_env "DB_SERVER"
+file_env "DB_PORT"
+file_env "DB_USER"
+file_env "DB_PASS"
+file_env "DB_NAMES"
+file_env "DB_NAMES_EXCLUDE"
+
+file_env "AWS_ENDPOINT_URL"
+file_env "AWS_ENDPOINT_OPT"
+file_env "AWS_CLI_OPTS"
+file_env "AWS_CLI_S3_CP_OPTS"
+file_env "AWS_ACCESS_KEY_ID"
+file_env "AWS_SECRET_ACCESS_KEY"
+file_env "AWS_DEFAULT_REGION"
+
+file_env "SMB_USER"
+file_env "SMB_PASS"
+
+file_env "TMP_PATH" "/tmp"
+
+file_env "COMPRESSION" "gzip"
+
+if [[ -n "$DB_DUMP_DEBUG" ]]; then
+  set -x
+fi
+
+# ensure it is defined
+POSTGRESQLDUMP_OPTS=${POSTGRESQLDUMP_OPTS:-}
+
+# login credentials
+if [ -n "${DB_USER}" ]; then
+  DBUSER="-u${DB_USER}"
+else
+  DBUSER=
+fi
+if [ -n "${DB_PASS}" ]; then
+  DBPASS="-p${DB_PASS}"
+else
+  DBPASS=
+fi
+
+# database server
+if [ -z "${DB_SERVER}" ]; then
+  echo "DB_SERVER variable is required. Exiting."
+  exit 1
+fi
+# database port
+if [ -z "${DB_PORT}" ]; then
+  echo "DB_PORT not provided, defaulting to 3306"
+  DB_PORT=5432
+fi
+
+#
+# set compress and decompress commands
+COMPRESS=
+UNCOMPRESS=
+case $COMPRESSION in
+  gzip)
+    COMPRESS="gzip"
+    UNCOMPRESS="gunzip"
+    EXTENSION="tgz"
+    ;;
+  bzip2)
+    COMPRESS="bzip2"
+    UNCOMPRESS="bzip2 -d"
+    EXTENSION="tbz2"
+    ;;
+  *)
+    echo "Unknown compression requested: $COMPRESSION" >&2
+    exit 1
+esac
+
+
+# temporary dump dir
+TMPDIR="${TMP_PATH}/backups"
+TMPRESTORE="${TMP_PATH}/restorefile"
+
+# this is global, so has to be set outside
+declare -A uri
+
+if [[ -n "$DB_RESTORE_TARGET" ]]; then
+else
+  # wait for the next time to start a backup
+  # for debugging
+  echo Starting at $(date)
+  last_run=0
+  current_time=$(date +"%s")
+  freq_time=$(($DB_DUMP_FREQ*60))
+  # get the begin time on our date
+  # REMEMBER: we are using the basic date package in alpine
+  # could be a delay in minutes or an absolute time of day
+  if [ -n "$DB_DUMP_CRON" ]; then
+    # calculate how long until the next cron instance is met
+    waittime=$(wait_for_cron "$DB_DUMP_CRON" "$current_time" $last_run)
+  elif [[ $DB_DUMP_BEGIN =~ ^\+(.*)$ ]]; then
+    waittime=$(( ${BASH_REMATCH[1]} * 60 ))
+    target_time=$(($current_time + $waittime))
+  else
+    today=$(date +"%Y-%m-%d")
+    target_time=$(date --date="${today} ${DB_DUMP_BEGIN}" +"%s")
+
+    if [[ "$target_time" < "$current_time" ]]; then
+      target_time=$(($target_time + 24*60*60))
+    fi
+
+    waittime=$(($target_time - $current_time))
+  fi
+
+  # If RUN_ONCE is set, don't wait
+  if [ -z "${RUN_ONCE}" ]; then
+    sleep $waittime
+    last_run=$(date +"%s")
+  fi
+  # enter the loop
+  exit_code=0
+  while true; do
+    # make sure the directory exists
+    mkdir -p $TMPDIR
+    do_dump
+    [ $? -ne 0 ] && exit_code=1
+    # we can have multiple targets
+    for target in ${DB_DUMP_TARGET}; do
+      backup_target ${target}
+      [ $? -ne 0 ] && exit_code=1
+    done
+    # remove lingering file
+    /bin/rm ${TMPDIR}/${SOURCE}
+
+    # wait, unless RUN_ONCE is set
+    current_time=$(date +"%s")
+    if [ -n "${RUN_ONCE}" ]; then
+      exit $exit_code
+    elif [ -n "${DB_DUMP_CRON}" ]; then
+      waittime=$(wait_for_cron "${DB_DUMP_CRON}" "$current_time" $last_run)
+    else
+      current_time=$(date +"%s")
+      # Calculate how long the previous backup took
+      backup_time=$(($current_time - $target_time))
+      # Calculate how many times the frequency time was passed during the previous backup.
+      freq_time_count=$(($backup_time / $freq_time))
+      # Increment the count with one because we want to wait at least the frequency time once.
+      freq_time_count_to_add=$(($freq_time_count + 1))
+      # Calculate the extra time to add to the previous target time
+      extra_time=$(($freq_time_count_to_add*$freq_time))
+      # Calculate the new target time needed for the next calculation
+      target_time=$(($target_time + $extra_time))
+      # Calculate the wait time
+      waittime=$(($target_time - $current_time))
+    fi
+    sleep $waittime
+    last_run=$(date +"%s")
+  done
+fi
