@@ -15,6 +15,13 @@ file_env "DB_PASS"
 file_env "DB_NAMES"
 file_env "DB_NAMES_EXCLUDE"
 
+file_env "DB_DUMP_FREQ" "1440"
+file_env "DB_DUMP_BEGIN" "+0"
+file_env "DB_DUMP_DEBUG"
+file_env "DB_DUMP_TARGET" "/backup"
+file_env "DB_DUMP_BY_SCHEMA"
+file_env "DB_DUMP_KEEP_PERMISSIONS" "true"
+
 file_env "AWS_ENDPOINT_URL"
 file_env "AWS_ENDPOINT_OPT"
 file_env "AWS_CLI_OPTS"
@@ -89,6 +96,17 @@ TMPRESTORE="${TMP_PATH}/restorefile"
 declare -A uri
 
 if [[ -n "$DB_RESTORE_TARGET" ]]; then
+  # Execute additional scripts for pre backup restore processing. For example,
+  # uncompress a tarball that contains the tarballs for the sql dump and a
+  # wordpress installation.
+  if [ -d /scripts.d/pre-restore/ ]; then
+    for i in $(ls /scripts.d/pre-restore/*.sh); do
+      if [ -x $i ]; then
+        DB_RESTORE_TARGET=${DB_RESTORE_TARGET} DB_DUMP_DEBUG=${DB_DUMP_DEBUG} $i
+      fi
+    done
+  fi
+  uri_parser ${DB_RESTORE_TARGET}
 else
   # wait for the next time to start a backup
   # for debugging
@@ -123,7 +141,7 @@ else
   fi
   # enter the loop
   exit_code=0
-  while true; do
+  le true; do
     # make sure the directory exists
     mkdir -p $TMPDIR
     do_dump
