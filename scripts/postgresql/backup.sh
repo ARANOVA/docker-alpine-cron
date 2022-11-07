@@ -141,7 +141,7 @@ else
   fi
   # enter the loop
   exit_code=0
-  le true; do
+  while true; do
     # make sure the directory exists
     mkdir -p $TMPDIR
     do_dump
