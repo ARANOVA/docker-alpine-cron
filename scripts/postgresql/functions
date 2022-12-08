@@ -132,7 +132,7 @@ function do_dump() {
       # skip db if it is in the exclude list
       continue
     fi
-    PGPASSWORD="$DB_PASS" $NICE_CMD pg_dump -h $DB_SERVER -p $DB_PORT -U $DBUSER -F t $POSYGRESQLDUMP_OPTS $onedb > $workdir/${onedb}_${now}.tar
+    PGPASSWORD="$DB_PASS" $NICE_CMD pg_dump -h $DB_SERVER -p $DB_PORT $DBUSER -F t $POSYGRESQLDUMP_OPTS $onedb > $workdir/${onedb}_${now}.tar
     [ $? -ne 0 ] && return 1
   done
   tar -C $workdir -cvf - . | $COMPRESS > ${TMPDIR}/${SOURCE}

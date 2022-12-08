@@ -46,7 +46,7 @@ POSTGRESQLDUMP_OPTS=${POSTGRESQLDUMP_OPTS:-}
 
 # login credentials
 if [ -n "${DB_USER}" ]; then
-  DBUSER="-u${DB_USER}"
+  DBUSER="-U ${DB_USER}"
 else
   DBUSER=
 fi
