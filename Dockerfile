@@ -21,7 +21,7 @@ COPY --from=builder /usr/local/bin/pg_dumpall /usr/local/bin/
 COPY --from=builder /usr/local/bin/pg_dump /usr/local/bin/
 COPY --from=builder /usr/local/lib/libpq* /usr/local/lib/
 
-RUN dos2unix /mysql/* && dos2unix /mongo/* && dos2unix /portainer/* && dos2unix /redis/* && dos2unix /influxdb/* && dos2unix /aws/* && dos2unix /*.sh && chmod a+x /*.sh && chmod a+x /mysql/*.sh && chmod a+x /mongo/*.sh && chmod a+x /portainer/*.sh && chmod a+x /redis/*.sh && chmod a+x /influxdb/*.sh && chmod a+x /aws/*.sh
+RUN dos2unix /postgresql/* && dos2unix /mysql/* && dos2unix /mongo/* && dos2unix /portainer/* && dos2unix /redis/* && dos2unix /influxdb/* && dos2unix /aws/* && dos2unix /*.sh && chmod a+x /*.sh && chmod a+x /postgresql/*.sh && chmod a+x /mysql/*.sh && chmod a+x /mongo/*.sh && chmod a+x /portainer/*.sh && chmod a+x /redis/*.sh && chmod a+x /influxdb/*.sh && chmod a+x /aws/*.sh
 
 ENTRYPOINT ["/docker-entry.sh"]
 #CMD ["/docker-cmd.sh"]
