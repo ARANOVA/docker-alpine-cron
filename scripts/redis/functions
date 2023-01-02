@@ -98,7 +98,14 @@ function do_dump() {
     now=${now//:/-}
   fi
   SOURCE=dump_${now}.rdb
-  redis-cli -h $DB_SERVER -p $DB_PORT SAVE
+  if [ -z "$DB_PASS" ]; then
+    redis-cli -h $DB_SERVER -p $DB_PORT SAVE
+  else
+    redis-cli -h $DB_SERVER -p $DB_PORT <<EOF
+AUTH ${DB_PASS}
+SAVE
+EOF
+  fi
   cp $DB_NAMES ${TMPDIR}/${SOURCE}
   [ $? -ne 0 ] && return 1
   gzip ${TMPDIR}/${SOURCE}
