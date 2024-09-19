@@ -9,7 +9,7 @@ LABEL org.opencontainers.image.source https://github.com/ARANOVA/docker-alpine-c
 
 ARG PG_VERSION=15
 
-RUN apk add --no-cache dcron curl ca-certificates mysql-client mariadb-connector-c mongodb-tools redis bash py-pip dos2unix && pip install awscli jq
+RUN apk add --no-cache dcron curl ca-certificates mysql-client mariadb-connector-c mongodb-tools redis bash dos2unix aws-cli jq
 RUN apk add --no-cache krb5-libs libldap keyutils-libs libsasl
 RUN wget https://dl.influxdata.com/influxdb/releases/influxdb-1.8.10-static_linux_amd64.tar.gz && \
   mkdir -p /influxdb && tar xvfz influxdb-1.8.10-static_linux_amd64.tar.gz -C /influxdb && mv /influxdb/influxdb-1.8.10-1/* /influxdb/ && rm -r /influxdb/usr && rm -r /influxdb/influxdb-1.8.10-1 && rm influxdb-1.8.10-static_linux_amd64.tar.gz
@@ -24,5 +24,4 @@ COPY --from=builder /usr/local/lib/libpq* /usr/local/lib/
 RUN dos2unix /postgresql/* && dos2unix /mysql/* && dos2unix /mongo/* && dos2unix /portainer/* && dos2unix /redis/* && dos2unix /influxdb/* && dos2unix /aws/* && dos2unix /*.sh && chmod a+x /*.sh && chmod a+x /postgresql/*.sh && chmod a+x /mysql/*.sh && chmod a+x /mongo/*.sh && chmod a+x /portainer/*.sh && chmod a+x /redis/*.sh && chmod a+x /influxdb/*.sh && chmod a+x /aws/*.sh
 
 ENTRYPOINT ["/docker-entry.sh"]
-#CMD ["/docker-cmd.sh"]
-CMD ["bash", "-c", "sleep 10000"]
+CMD ["/docker-cmd.sh"]
