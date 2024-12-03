@@ -1,4 +1,4 @@
-FROM postgres:alpine as builder
+FROM postgres:alpine AS builder
 
 FROM alpine:3
 LABEL maintainer="d@d.ru"
