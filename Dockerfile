@@ -5,9 +5,7 @@ LABEL maintainer="d@d.ru"
 LABEL maintainer="daniel.sanchez@aranova.es"
 LABEL maintainer="pablo.sanchez@aranova.es"  
 
-LABEL org.opencontainers.image.source https://github.com/ARANOVA/docker-alpine-cron
-
-ARG PG_VERSION=15
+LABEL org.opencontainers.image.source=https://github.com/ARANOVA/docker-alpine-cron
 
 RUN apk add --no-cache dcron curl ca-certificates mysql-client mariadb-connector-c mongodb-tools redis bash dos2unix aws-cli jq
 RUN apk add --no-cache krb5-libs libldap keyutils-libs libsasl lz4-libs
