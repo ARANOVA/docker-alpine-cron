@@ -107,6 +107,52 @@ if [[ -n "$DB_RESTORE_TARGET" ]]; then
     done
   fi
   uri_parser ${DB_RESTORE_TARGET}
+    if [[ "${uri[schema]}" == "file" ]]; then
+    cp $DB_RESTORE_TARGET $TMPRESTORE 2>/dev/null
+  elif [[ "${uri[schema]}" == "s3" ]]; then
+    [[ -n "$AWS_ENDPOINT_URL" ]] && AWS_ENDPOINT_OPT="--endpoint-url $AWS_ENDPOINT_URL"
+      aws ${AWS_CLI_OPTS} ${AWS_ENDPOINT_OPT} s3 cp ${AWS_CLI_S3_CP_OPTS} "${DB_RESTORE_TARGET}" $TMPRESTORE
+  elif [[ "${uri[schema]}" == "smb" ]]; then
+    if [[ -n "$SMB_USER" ]]; then
+      UPASSARG="-U"
+      UPASS="${SMB_USER}%${SMB_PASS}"
+    elif [[ -n "${uri[user]}" ]]; then
+      UPASSARG="-U"
+      UPASS="${uri[user]}%${uri[password]}"
+    else
+      UPASSARG=
+      UPASS=
+    fi
+    if [[ -n "${uri[userdomain]}" ]]; then
+      UDOM="-W ${uri[userdomain]}"
+    else
+      UDOM=
+    fi
+    smbclient -N "//${uri[host]}/${uri[share]}" ${UPASSARG} "${UPASS}" ${UDOM} -c "get ${uri[sharepath]} ${TMPRESTORE}"
+  fi
+  # did we get a file?
+  if [[ -f "$TMPRESTORE" ]]; then
+    workdir="${TMP_PATH}/restore.$$"
+    rm -rf $workdir
+    mkdir -p $workdir
+    EXTRACTED_FILE=$($UNCOMPRESS < $TMPRESTORE | tar -C $workdir -xvf - | sed -n '2p')
+    echo $EXTRACTED_FILE
+    onedb=${DB_NAMES[0]}
+    PGPASSWORD="$DB_PASS" $NICE_CMD pg_restore -h $DB_SERVER -p $DB_PORT $DBUSER -F t $POSYGRESQLDUMP_OPTS -d $onedb --clean ${workdir}/${EXTRACTED_FILE}
+    /bin/rm -f $TMPRESTORE
+  else
+    echo "Could not find restore file $DB_RESTORE_TARGET"
+    exit 1
+  fi
+  # Execute additional scripts for post backup restore processing. For example,
+  # uncompress a tarball that contains the files of a wordpress installation
+  if [ -d /scripts.d/post-restore/ ]; then
+    for i in $(ls /scripts.d/post-restore/*.sh); do
+      if [ -x $i ]; then
+        DB_RESTORE_TARGET=${DB_RESTORE_TARGET} DB_DUMP_DEBUG=${DB_DUMP_DEBUG} $i
+      fi
+    done
+  fi
 else
   # wait for the next time to start a backup
   # for debugging
