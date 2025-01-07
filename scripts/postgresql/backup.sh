@@ -110,8 +110,14 @@ if [[ -n "$DB_RESTORE_TARGET" ]]; then
     if [[ "${uri[schema]}" == "file" ]]; then
     cp $DB_RESTORE_TARGET $TMPRESTORE 2>/dev/null
   elif [[ "${uri[schema]}" == "s3" ]]; then
+    key=$(aws s3api list-objects-v2 \
+      --bucket "${uri[host]}" \
+      --prefix "${uri[path]:1}" \
+      --query 'reverse(sort_by(Contents, &LastModified))[0].Key' \
+      --output text)
+    LATEST_FILE=$(basename "$key")
     [[ -n "$AWS_ENDPOINT_URL" ]] && AWS_ENDPOINT_OPT="--endpoint-url $AWS_ENDPOINT_URL"
-      aws ${AWS_CLI_OPTS} ${AWS_ENDPOINT_OPT} s3 cp ${AWS_CLI_S3_CP_OPTS} "${DB_RESTORE_TARGET}" $TMPRESTORE
+      aws ${AWS_CLI_OPTS} ${AWS_ENDPOINT_OPT} s3 cp ${AWS_CLI_S3_CP_OPTS} "${DB_RESTORE_TARGET}/${LATEST_FILE}" $TMPRESTORE
   elif [[ "${uri[schema]}" == "smb" ]]; then
     if [[ -n "$SMB_USER" ]]; then
       UPASSARG="-U"
