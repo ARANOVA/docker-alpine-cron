@@ -1,6 +1,6 @@
 ARG TARGETARCH
 
-FROM postgres:alpine AS builder
+FROM postgres:18-alpine AS builder
 ARG TARGETARCH
 
 FROM alpine:3
