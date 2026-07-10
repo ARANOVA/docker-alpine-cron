@@ -1,11 +1,48 @@
-FROM alpine:latest
-MAINTAINER d@d.ru
- 
-RUN apk update && apk add dcron curl wget rsync ca-certificates && rm -rf /var/cache/apk/*
+ARG TARGETARCH
+
+FROM postgres:18-alpine AS builder
+ARG TARGETARCH
+
+FROM alpine:3
+ARG TARGETARCH
+
+LABEL maintainer="d@d.ru"
+LABEL maintainer="daniel.sanchez@aranova.es"
+LABEL maintainer="pablo.sanchez@aranova.es"
+
+LABEL org.opencontainers.image.source=https://github.com/ARANOVA/docker-alpine-cron
+
+RUN apk add --no-cache dcron curl ca-certificates mysql-client mariadb-connector-c mongodb-tools redis bash dos2unix aws-cli jq
+RUN apk add --no-cache krb5-libs libldap keyutils-libs libsasl lz4-libs libedit readline gcompat
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+    wget https://dl.influxdata.com/influxdb/releases/influxdb-1.8.10_linux_arm64.tar.gz && \
+    mkdir -p /influxdb && \
+    tar xvfz influxdb-1.8.10_linux_arm64.tar.gz -C /influxdb && \
+    mv /influxdb/influxdb-1.8.10-1/usr/bin/* /influxdb/ && \
+    rm -rf /influxdb/influxdb-1.8.10-1 /influxdb/etc /influxdb/usr /influxdb/var && \
+    rm influxdb-1.8.10_linux_arm64.tar.gz; \
+  elif [ "$TARGETARCH" = "amd64" ]; then \
+    wget https://dl.influxdata.com/influxdb/releases/influxdb-1.8.10_linux_amd64.tar.gz && \
+    mkdir -p /influxdb && \
+    tar xvfz influxdb-1.8.10_linux_amd64.tar.gz -C /influxdb && \
+    mv /influxdb/influxdb-1.8.10-1/usr/bin/* /influxdb/ && \
+    rm -rf /influxdb/influxdb-1.8.10-1 /influxdb/etc /influxdb/usr /influxdb/var && \
+    rm influxdb-1.8.10_linux_amd64.tar.gz; \
+  else \
+    echo "❌ Arquitectura no soportada para influxdb: $TARGETARCH" ; \
+  fi
 
 RUN mkdir -p /var/log/cron && mkdir -m 0644 -p /var/spool/cron/crontabs && touch /var/log/cron/cron.log && mkdir -m 0644 -p /etc/cron.d
+RUN apk add --no-cache tzdata && cp /usr/share/zoneinfo/Europe/Madrid /etc/localtime && apk del tzdata
 
-COPY /scripts/* /
+COPY /scripts/ /
+COPY --from=builder /usr/local/bin/pg_dumpall /usr/local/bin/
+COPY --from=builder /usr/local/bin/pg_dump /usr/local/bin/
+COPY --from=builder /usr/local/bin/pg_restore /usr/local/bin/
+COPY --from=builder /usr/local/bin/psql /usr/local/bin/
+COPY --from=builder /usr/local/lib/libpq* /usr/local/lib/
+
+RUN dos2unix /postgresql/* && dos2unix /mysql/* && dos2unix /mongo/* && dos2unix /portainer/* && dos2unix /redis/* && dos2unix /influxdb/* && dos2unix /aws/* && dos2unix /monitor/* && dos2unix /*.sh && chmod a+x /*.sh && chmod a+x /postgresql/*.sh && chmod a+x /mysql/*.sh && chmod a+x /mongo/*.sh && chmod a+x /portainer/*.sh && chmod a+x /redis/*.sh && chmod a+x /influxdb/*.sh && chmod a+x /aws/*.sh && chmod a+x /monitor/*.sh
 
 ENTRYPOINT ["/docker-entry.sh"]
 CMD ["/docker-cmd.sh"]

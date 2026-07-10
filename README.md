@@ -3,6 +3,12 @@
 Dockerfile and scripts for creating image with Cron based on Alpine  
 Installed packages: dcron wget rsync ca-certificates  
 
+## Build
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v8 -t ghcr.io/aranova/docker-alpine-cron:pg18 --push .
+```
+
 #### Environment variables:
 
 CRON_STRINGS - strings with cron jobs. Use "\n" for newline (Default: undefined)   
@@ -19,7 +25,8 @@ If *CRON_STRINGS* defined script creates file */var/spool/cron/crontab/CRON_STRI
 Log file by default placed in /var/log/cron/cron.log 
 
 #### Simple usage:
-```
+
+```bash
 docker run --name="alpine-cron-sample" -d \
 -v /path/to/app/conf/crontabs:/etc/cron.d \
 -v /path/to/app/scripts:/scripts \
@@ -27,7 +34,8 @@ xordiv/docker-alpine-cron
 ```
 
 #### With scripts and CRON_STRINGS
-```
+
+```bash
 docker run --name="alpine-cron-sample" -d \
 -e 'CRON_STRINGS=* * * * * /scripts/myapp-script.sh'
 -v /path/to/app/scripts:/scripts \
@@ -35,7 +43,8 @@ xordiv/docker-alpine-cron
 ```
 
 #### Get URL by cron every minute
-```
+
+```bash
 docker run --name="alpine-cron-sample" -d \
 -e 'CRON_STRINGS=* * * * * wget --spider https://sample.dockerhost/cron-jobs'
 xordiv/docker-alpine-cron

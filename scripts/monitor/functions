@@ -1,0 +1,187 @@
+#!/bin/bash
+# Function definitions for backup monitor.
+# Source this file from backup.sh.
+
+#
+# Environment variable reading function
+#
+# Enables reading environment variable from file (Docker secrets pattern).
+#
+# usage: file_env VAR [DEFAULT]
+#    ie: file_env 'MONITOR_NAMESPACE' 'backup'
+# (will allow for "$VAR_FILE" to fill in the value of
+#  "$VAR" from a file, especially for Docker's secrets feature)
+#
+file_env() {
+  local var="$1"
+  local fileVar="${var}_FILE"
+  local def="${2:-}"
+  if [ "${!var:-}" ] && [ "${!fileVar:-}" ]; then
+    echo >&2 "error: both $var and $fileVar are set (but are exclusive)"
+    exit 1
+  fi
+  local val="$def"
+  if [ "${!var:-}" ]; then
+    val="${!var}"
+  elif [ "${!fileVar:-}" ]; then
+    val="$(< "${!fileVar}")"
+  fi
+  export "$var"="$val"
+  unset "$fileVar"
+}
+
+# ── S3 targets mapping ─────────────────────────────────────────────────────
+declare -A S3
+
+__load_s3_mapping() {
+  declare -gA S3
+  local json=""
+
+  # 1. JSON string via MONITOR_S3_MAPPING env var
+  if [ -n "$MONITOR_S3_MAPPING" ]; then
+    json="$MONITOR_S3_MAPPING"
+  # 2. JSON file via MONITOR_S3_MAPPING_FILE env var
+  elif [ -n "$MONITOR_S3_MAPPING_FILE" ] && [ -f "$MONITOR_S3_MAPPING_FILE" ]; then
+    json=$(cat "$MONITOR_S3_MAPPING_FILE")
+  fi
+
+  if [ -n "$json" ]; then
+    while IFS="=" read -r key value; do
+      [ -n "$key" ] && S3["$key"]="$value"
+    done < <(echo "$json" | jq -r 'to_entries[] | "\(.key)=\(.value)"')
+    return
+  fi
+
+  # 3. Fallback: sample mapping — replace with your own
+  S3=(
+    ["sample-postgresql-backup"]="sample-postgresql"
+    ["sample-mongo-backup"]="sample-mongo"
+  )
+}
+
+# ── Counters ───────────────────────────────────────────────────────────────
+PASSED=0; WARNINGS=0; FAILURES=0
+
+# ── Logging helpers ────────────────────────────────────────────────────────
+log_ok()   { echo "  [OK]    $1"; ((PASSED++)) || true; }
+log_fail() { echo "  [FAIL]  $1"; ((FAILURES++)) || true; }
+log_warn() { echo "  [WARN]  $1"; ((WARNINGS++)) || true; }
+log_info() { echo "  [INFO]  $1"; }
+
+# ── Token setup ────────────────────────────────────────────────────────────
+# MONITOR_TOKEN can be set directly, or read from MONITOR_TOKEN_FILE
+if [ -z "$MONITOR_TOKEN" ] && [ -n "$MONITOR_TOKEN_FILE" ] && [ -f "$MONITOR_TOKEN_FILE" ]; then
+  MONITOR_TOKEN=$(cat "$MONITOR_TOKEN_FILE")
+fi
+
+TODAY=$(TZ="$MONITOR_TIMEZONE" date +%Y-%m-%d)
+
+# ── Kubernetes API helper ───────────────────────────────────────────────────
+k8s_api() {
+  local path="$1"; shift
+  curl -s \
+    --cacert "$MONITOR_CA" \
+    -H "Authorization: Bearer $MONITOR_TOKEN" \
+    "${MONITOR_API_URL}${path}" \
+    "$@"
+}
+
+# ── PostgreSQL DB coverage audit (reuses pre-fetched CronJob JSON) ──────────
+__pg_audit_with_cj() {
+  local cj_json="$1"
+  echo "──────────────────────────────────────────────────────"
+  echo "  Step 0: PostgreSQL DB coverage audit"
+  echo ""
+
+  local pg_cj
+  pg_cj=$(echo "$cj_json" | jq -r --arg n "$MONITOR_PG_CJ_NAME" \
+    '.items[] | select(.metadata.name==$n)')
+  local pg_suspended
+  pg_suspended=$(echo "$pg_cj" | jq -r '.spec.suspend // false')
+
+  if [ "$pg_suspended" = "true" ]; then
+    log_info "$MONITOR_PG_CJ_NAME is SUSPENDED — skipping PG audit"
+    echo ""
+    return
+  fi
+  if [ -z "$pg_cj" ] || [ "$pg_cj" = "null" ]; then
+    log_warn "$MONITOR_PG_CJ_NAME CronJob not found — skipping PG audit"
+    echo ""
+    return
+  fi
+
+  local db_names_raw db_server db_user
+  db_names_raw=$(echo "$pg_cj" | jq -r \
+    '.spec.jobTemplate.spec.template.spec.containers[0].env[] | select(.name=="DB_NAMES").value // ""' | xargs)
+  db_server=$(echo "$pg_cj" | jq -r \
+    '.spec.jobTemplate.spec.template.spec.containers[0].env[] | select(.name=="DB_SERVER").value // ""' | xargs)
+  db_user=$(echo "$pg_cj" | jq -r \
+    '.spec.jobTemplate.spec.template.spec.containers[0].env[] | select(.name=="DB_USER").value // ""' | xargs)
+
+  # Override from env vars if set
+  [ -n "$MONITOR_PG_SERVER" ] && db_server="$MONITOR_PG_SERVER"
+  [ -z "$db_user" ] && db_user="$MONITOR_PG_USER"
+
+  if [ -z "$db_server" ]; then
+    log_warn "Cannot determine DB_SERVER from CronJob or MONITOR_PG_SERVER — skipping PG audit"
+    echo ""
+    return
+  fi
+  if [ -z "$PGPASSWORD" ]; then
+    log_warn "PGPASSWORD not set — cannot connect to PG server ($db_server)"
+    echo ""
+    return
+  fi
+  if ! command -v psql &>/dev/null; then
+    log_warn "psql not available — install postgresql-client or add psql to the image"
+    echo ""
+    return
+  fi
+
+  local pg_dbs pg_error
+  pg_dbs=$(PGPASSWORD="$PGPASSWORD" PGCONNECT_TIMEOUT=10 psql \
+    -h "$db_server" -U "${db_user:-postgres}" -d postgres -w \
+    -tAc "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname" 2>&1 || echo "")
+  # If output doesn't look like a database list, it's an error
+  if [ -z "$pg_dbs" ] || echo "$pg_dbs" | grep -qE "^(psql:|ERROR|FATAL|could not|connection)"; then
+    log_fail "Cannot connect to PG server: $db_server"
+    [ -n "$pg_dbs" ] && echo "         $pg_dbs" | head -3
+    echo ""
+    return
+  fi
+
+  echo "  PG server:      $db_server"
+  echo "  PG user:        ${db_user:-postgres}"
+
+  local backed_up=($db_names_raw)
+  local unbaked=""
+  while IFS= read -r db; do
+    [ -z "$db" ] && continue
+    local found=0
+    for b in "${backed_up[@]}"; do
+      [ "$db" = "$b" ] && found=1 && break
+    done
+    if [ "$found" -eq 0 ]; then
+      unbaked="$unbaked $db"
+    fi
+  done <<< "$pg_dbs"
+
+  local total_pg backed_count unbaked_count
+  total_pg=$(echo "$pg_dbs" | wc -l | tr -d ' ')
+  backed_count=${#backed_up[@]}
+  unbaked_count=$(echo "$unbaked" | wc -w | tr -d ' ')
+
+  echo "  DBs on server:  $total_pg"
+  echo "  DBs in backup:  $backed_count"
+  echo "  DBs UNBACKED:   $unbaked_count"
+
+  if [ "$unbaked_count" -gt 0 ]; then
+    log_warn "Unbacked databases found — add to DB_NAMES in postgresql.yaml:"
+    for db in $unbaked; do
+      echo "         → $db"
+    done
+  else
+    log_ok "All $total_pg databases are covered by backup"
+  fi
+  echo ""
+}
